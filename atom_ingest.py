@@ -99,7 +99,7 @@ class AtomPersister:
                 if df.modification_time > dataset_latest_modification_time:
                     dataset_latest_modification_time = df.modification_time
 
-            return iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()):
+            return iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()) 
 
         except Dataset.DoesNotExist:
             return False
