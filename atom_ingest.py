@@ -234,6 +234,15 @@ class AtomPersister:
 
         # Could check hashes.
         existingDataFiles = Dataset_File.objects.filter(filename=filename, dataset=dataset)
+        # Set a modification_time if there isn't one there,
+        # because if no data file within this data set has
+        # a modification time, then is_updated() will assume
+        # that the data set needs to be checked for new data
+        # files every time it appears in the feed.
+        for df in existingDataFiles:
+            if df.modification_time is None:
+                df.modification_time = datetime.now()
+                df.save()
         if existingDataFiles.count() > 0:
             return
 
