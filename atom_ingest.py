@@ -9,9 +9,10 @@ from tardis.tardis_portal.fetcher import get_credential_handler
 from tardis.tardis_portal.ParameterSetManager import ParameterSetManager
 from tardis.tardis_portal.models import Dataset, DatasetParameter, \
     Experiment, ExperimentACL, ExperimentParameter, ParameterName, Schema, \
-    Dataset_File, User, UserProfile, Author_Experiment
+    Dataset_File, User, UserProfile, Replica, Location, Author_Experiment
 from tardis.tardis_portal.auth import AuthService
 from tardis.tardis_portal.tasks import email_user_task
+
 from django.db import transaction
 from django.conf import settings
 import urllib2
@@ -68,6 +69,9 @@ class AtomPersister:
     PARAM_EXPERIMENT_ID = 'ExperimentID'
     PARAM_UPDATED = 'Updated'
     PARAM_EXPERIMENT_TITLE = 'ExperimentTitle'
+
+    def __init__(self, async_copy=True):
+        self.async_copy = async_copy;
 
 
     def is_new(self, feed, entry):
@@ -246,12 +250,10 @@ class AtomPersister:
         if existing_data_files.count() > 0:
             return
 
-        datafile = Dataset_File(url=enclosure.href, \
-                                filename=filename, \
-                                dataset=dataset)
-        datafile.protocol = enclosure.href.partition('://')[0]
+        datafile = Dataset_File(filename=filename, dataset=dataset)
         datafile.created_time = datetime.now()
         datafile.modification_time = datafile.created_time
+
         try:
             datafile.mimetype = enclosure.mime
         except AttributeError:
@@ -269,12 +271,28 @@ class AtomPersister:
         except AttributeError:
             pass
         datafile.save()
-        self.make_local_copy(datafile)
+        url = enclosure.href
+        # This means we will allow the atom feed to feed us any enclosure
+        # URL that matches a registered location.  Maybe we should restrict
+        # this to a specific location.
+        location = Location.get_location_for_url(url)
+        if not location:
+            logger.error('Rejected ingestion for unknown location %s' % url)
+            return
+
+        replica = Replica(datafile=datafile, url=url,
+                          location=location)
+        replica.protocol = enclosure.href.partition('://')[0]
+        replica.save()
+        self.make_local_copy(replica)
 
 
-    def make_local_copy(self, datafile):
+    def make_local_copy(self, replica):
         from tardis.tardis_portal.tasks import make_local_copy
-        make_local_copy.delay(datafile.id)
+        if self.async_copy:
+            make_local_copy.delay(replica.id)
+        else:
+            make_local_copy(replica.id)
 
 
     def _get_experiment_details(self, entry, user):
