@@ -3,6 +3,13 @@ MyTardis Atom App
 
 This app can be used to ingest datasets via Atom. Please see `tests/atom_test` for format examples.
 
+To run tests, add
+
+`IS_SECURE = False
+MEDIA_ROOT = FILE_STORE_PATH`
+
+To `tardis/test_settings.py` first.
+
 New metadata is ingested first, with data files being copied asynchronously afterwards.
 
 Installation
