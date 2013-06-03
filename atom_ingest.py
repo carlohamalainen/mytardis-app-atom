@@ -15,6 +15,8 @@ from tardis.tardis_portal.tasks import email_user_task
 from django.db import transaction
 from django.conf import settings
 import urllib2
+from datetime import datetime
+from pytz import reference
 
 # Ensure filters are loaded
 try:
@@ -79,6 +81,28 @@ class AtomPersister:
             return False
         except Dataset.DoesNotExist:
             return True
+
+
+    def is_updated(self, feed, entry):
+        '''
+        :param feed: Feed context for entry
+        :param entry: Entry to check
+        returns a boolean
+        '''
+        try:
+            dataset = self._get_dataset(feed, entry)
+
+            dataset_latest_modification_time = datetime.fromtimestamp(0)
+            for df in Dataset_File.objects.filter(dataset_id=dataset.id):
+                if df.modification_time is None:
+                    continue
+                if df.modification_time > dataset_latest_modification_time:
+                    dataset_latest_modification_time = df.modification_time
+
+            return iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()) 
+
+        except Dataset.DoesNotExist:
+            return False
 
 
     def _get_dataset(self, feed, entry):
@@ -207,10 +231,27 @@ class AtomPersister:
 
     def process_enclosure(self, dataset, enclosure):
         filename = getattr(enclosure, 'title', basename(enclosure.href))
+
+        # Could check hashes.
+        existing_data_files = Dataset_File.objects.filter(filename=filename, dataset=dataset)
+        # Set a modification_time if there isn't one there,
+        # because if no data file within this data set has
+        # a modification time, then is_updated() will assume
+        # that the data set needs to be checked for new data
+        # files every time it appears in the feed.
+        for df in existing_data_files:
+            if df.modification_time is None:
+                df.modification_time = datetime.now()
+                df.save()
+        if existing_data_files.count() > 0:
+            return
+
         datafile = Dataset_File(url=enclosure.href, \
                                 filename=filename, \
                                 dataset=dataset)
         datafile.protocol = enclosure.href.partition('://')[0]
+        datafile.created_time = datetime.now()
+        datafile.modification_time = datafile.created_time
         try:
             datafile.mimetype = enclosure.mime
         except AttributeError:
@@ -307,6 +348,22 @@ class AtomPersister:
             # Create dataset if necessary
             try:
                 dataset = self._get_dataset(feed, entry)
+
+                dataset_latest_modification_time=datetime.fromtimestamp(0)
+                for df in Dataset_File.objects.filter(dataset_id=dataset.id):
+                    if df.modification_time is None:
+                        continue
+                    if df.modification_time > dataset_latest_modification_time:
+                        dataset_latest_modification_time = df.modification_time
+
+                if iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()):
+                    # Add datafiles
+                    for enclosure in getattr(entry, 'enclosures', []):
+                        self.process_enclosure(dataset, enclosure)
+                    # Set dataset to be immutable
+                    dataset.immutable = True
+                    dataset.save()
+
             except Dataset.DoesNotExist:
                 experiment = self._get_experiment(entry, user)
                 dataset = experiment.datasets.create(description=entry.title)
@@ -359,7 +416,7 @@ class AtomWalker:
         while True:
             if doc == None:
                 break
-            new_entries = filter(lambda entry: self.persister.is_new(doc.feed, entry), doc.entries)
+            new_entries = filter(lambda entry: self.persister.is_new(doc.feed, entry) or self.persister.is_updated(doc.feed, entry), doc.entries)
             entries.extend(map(lambda entry: (doc.feed, entry), new_entries))
             next_href = self._get_next_href(doc)
             # Stop if the filter found an existing entry or no next
