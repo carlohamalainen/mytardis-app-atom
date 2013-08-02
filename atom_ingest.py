@@ -18,6 +18,7 @@ from django.conf import settings
 import urllib2
 from datetime import datetime
 from pytz import reference
+import inspect
 
 # Ensure filters are loaded
 try:
@@ -446,5 +447,21 @@ class AtomWalker:
 
     def fetch_feed(self, url):
         logger.debug('Fetching feed: %s' % url)
-        return feedparser.parse(url, handlers=[get_credential_handler()])
+        doc = None
+        if 'handlers' in inspect.getargspec(feedparser.parse).args:
+            # This is the official version of feedparser, which uses urllib2
+            doc = feedparser.parse(url, handlers=[get_credential_handler()])
+        else:
+            # This is a modified version of feedparser, which uses requests:
+            # https://github.com/CVL-dev/feedparser
+            found_feed_credentials = False
+            for (settings_url, username, password) in settings.REMOTE_SERVER_CREDENTIALS:
+                if url.startswith(settings_url.strip("/")):
+                    doc = feedparser.parse(url, username=username, password=password)
+                    found_feed_credentials = True
+            if found_feed_credentials==False:
+                logger.error('Failed to find credentials for feed %s in settings.py' % url)
+        if doc is not None and doc.bozo:
+            raise doc.bozo_exception
+        return doc
 
