@@ -1,15 +1,23 @@
 import feedparser
 import iso8601
 from posixpath import basename
+from django.template import Context
+from django.contrib.sites.models import Site
+from django.contrib.auth.models import User
 from tardis.tardis_portal.auth.localdb_auth import django_user
 from tardis.tardis_portal.fetcher import get_credential_handler
 from tardis.tardis_portal.ParameterSetManager import ParameterSetManager
 from tardis.tardis_portal.models import Dataset, DatasetParameter, \
     Experiment, ObjectACL, ExperimentParameter, ParameterName, Schema, \
-    Dataset_File, User, UserProfile, Replica, Location
+    Dataset_File, User, UserProfile, Replica, Location, Author_Experiment
+from tardis.tardis_portal.auth import AuthService
+from tardis.tardis_portal.tasks import email_user_task
+
 from django.db import transaction
 from django.conf import settings
 import urllib2
+from datetime import datetime
+from pytz import reference
 
 # Ensure filters are loaded
 try:
@@ -79,6 +87,28 @@ class AtomPersister:
             return True
 
 
+    def is_updated(self, feed, entry):
+        '''
+        :param feed: Feed context for entry
+        :param entry: Entry to check
+        returns a boolean
+        '''
+        try:
+            dataset = self._get_dataset(feed, entry)
+
+            dataset_latest_modification_time = datetime.fromtimestamp(0)
+            for df in Dataset_File.objects.filter(dataset_id=dataset.id):
+                if df.modification_time is None:
+                    continue
+                if df.modification_time > dataset_latest_modification_time:
+                    dataset_latest_modification_time = df.modification_time
+
+            return iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()) 
+
+        except Dataset.DoesNotExist:
+            return False
+
+
     def _get_dataset(self, feed, entry):
         try:
             param_name = ParameterName.objects.get(name=self.PARAM_ENTRY_ID,
@@ -105,25 +135,125 @@ class AtomPersister:
 
     def _get_user_from_entry(self, entry):
         try:
-            if entry.author_detail.email != None:
+            if entry.author_detail.email is not None:
+                logger.info('User has an email address: %s'
+                             % entry.author_detail.email)
                 return User.objects.get(email=entry.author_detail.email)
         except (User.DoesNotExist, AttributeError):
             pass
         # Handle spaces in name
         username_ = entry.author_detail.name.strip().replace(" ", "_")
         try:
-            return User.objects.get(username=username_)
+            user = User.objects.get(username=username_)
+            logger.info('username %s exists' % username_)
+            return user
         except User.DoesNotExist:
             pass
-        user = User(username=username_)
-        user.save()
-        UserProfile(user=user).save()
+        logger.info('Creating user %s' % username_)
+        user = self._create_user_from_entry(username_)
         return user
 
+    def _create_user_from_entry(self, username):
+        user = self._default_create_user(username)
+        logger.info('tried to create user %s with result: %s' % (username, user))
+
+        if not user:
+            logger.info('No default user found, creating localdb user')
+            authService = AuthService()
+
+            userdict = {"id": username,
+                        "first_name": username,
+                        "last_name": "",
+                        "email": settings.EMAIL_HOST_USER}
+
+            user = authService._get_or_create_user_from_dict(
+                userdict, 'localdb')
+
+            self._email_staff(user)
+        else:
+            authmethod = ""
+            for authKey, authDisplayName, authBackend in settings.AUTH_PROVIDERS:
+                if settings.STAGING_PROTOCOL == authKey:
+                    authmethod = authDisplayName
+
+            logger.info('sending email to %s for new account' % user.email)
+            self._email_user_nopass(user, authmethod)
+
+        return user
+
+    def _email_user_nopass(self, user, authmethod):
+        protocol = ""
+
+        if settings.IS_SECURE:
+            protocol = "s"
+        
+        current_site_complete = "http%s://%s" % (protocol, Site.objects.get_current().domain)
+
+        context = Context({
+            'username': user.username,
+            'first_name': user.first_name,
+            'current_site': current_site_complete,
+            'authmethod': authmethod, })
+
+        subject = '[MyTardis] New Account Created'
+
+        logger.info('email task dispatched to %s' % user.email)
+        email_user_task.delay(subject, 'user_creation_nopass', context, user)
+
+    def _email_staff(self, user):
+        protocol = ""
+
+        if settings.IS_SECURE:
+            protocol = "s"
+
+        current_site_complete = "http%s://%s" % (protocol, Site.objects.get_current().domain)
+
+        context = Context({
+            'username': user.username,
+            'current_site': current_site_complete, })
+
+        subject = '[MyTardis] New Account Created For External User'
+
+        us = User.objects.filter(is_staff=True)
+
+        for staff in us:
+
+            if staff.email:
+                logger.info('email task dispatched to staff %s for user %s'
+                            % (staff.username, user.username))
+                email_user_task.delay(subject, 'user_creation_for_staff',
+                                      context, staff)
+
+    def _default_create_user(self, username):
+        authMethod = settings.STAGING_PROTOCOL
+
+        authService = AuthService()
+
+        user = authService.getUser(authMethod, username)
+
+        return user
 
     def process_enclosure(self, dataset, enclosure):
         filename = getattr(enclosure, 'title', basename(enclosure.href))
+
+        # Could check hashes.
+        existing_data_files = Dataset_File.objects.filter(filename=filename, dataset=dataset)
+        # Set a modification_time if there isn't one there,
+        # because if no data file within this data set has
+        # a modification time, then is_updated() will assume
+        # that the data set needs to be checked for new data
+        # files every time it appears in the feed.
+        for df in existing_data_files:
+            if df.modification_time is None:
+                df.modification_time = datetime.now()
+                df.save()
+        if existing_data_files.count() > 0:
+            return
+
         datafile = Dataset_File(filename=filename, dataset=dataset)
+        datafile.created_time = datetime.now()
+        datafile.modification_time = datafile.created_time
+
         try:
             datafile.mimetype = enclosure.mime
         except AttributeError:
@@ -203,6 +333,15 @@ class AtomPersister:
                                     created_by=user,
                                     public_access=public_access)
             experiment.save()
+
+            if user.first_name or user.last_name:
+
+                author_experiment = Author_Experiment(experiment=experiment,
+                                                      author='%s %s' % (user.first_name or '',
+                                                                        user.last_name or ''),
+                                                      order=0)
+                author_experiment.save()
+
             self._create_experiment_id_parameter_set(experiment, experimentId)
             acl = ObjectACL(content_object=experiment,
                     pluginId=django_user,
@@ -227,6 +366,22 @@ class AtomPersister:
             # Create dataset if necessary
             try:
                 dataset = self._get_dataset(feed, entry)
+
+                dataset_latest_modification_time=datetime.fromtimestamp(0)
+                for df in Dataset_File.objects.filter(dataset_id=dataset.id):
+                    if df.modification_time is None:
+                        continue
+                    if df.modification_time > dataset_latest_modification_time:
+                        dataset_latest_modification_time = df.modification_time
+
+                if iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()):
+                    # Add datafiles
+                    for enclosure in getattr(entry, 'enclosures', []):
+                        self.process_enclosure(dataset, enclosure)
+                    # Set dataset to be immutable
+                    dataset.immutable = True
+                    dataset.save()
+
             except Dataset.DoesNotExist:
                 experiment = self._get_experiment(entry, user)
                 dataset = experiment.datasets.create(description=entry.title)
@@ -279,7 +434,7 @@ class AtomWalker:
         while True:
             if doc == None:
                 break
-            new_entries = filter(lambda entry: self.persister.is_new(doc.feed, entry), doc.entries)
+            new_entries = filter(lambda entry: self.persister.is_new(doc.feed, entry) or self.persister.is_updated(doc.feed, entry), doc.entries)
             entries.extend(map(lambda entry: (doc.feed, entry), new_entries))
             next_href = self._get_next_href(doc)
             # Stop if the filter found an existing entry or no next
