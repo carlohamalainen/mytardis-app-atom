@@ -19,6 +19,7 @@ import urllib2
 from datetime import datetime
 from pytz import reference
 import inspect
+import os
 
 # Ensure filters are loaded
 try:
@@ -236,9 +237,13 @@ class AtomPersister:
 
     def process_enclosure(self, dataset, enclosure):
         filename = getattr(enclosure, 'title', basename(enclosure.href))
+        subdirectory = getattr(enclosure, 'subdirectory', '')
 
         # Could check hashes.
-        existing_data_files = Dataset_File.objects.filter(filename=filename, dataset=dataset)
+
+        #existing_data_files = Dataset_File.objects.filter(filename=filename, dataset=dataset)
+        existing_data_files = Dataset_File.objects.filter(filename=filename,directory=subdirectory,dataset=dataset)
+
         # Set a modification_time if there isn't one there,
         # because if no data file within this data set has
         # a modification time, then is_updated() will assume
@@ -251,7 +256,7 @@ class AtomPersister:
         if existing_data_files.count() > 0:
             return
 
-        datafile = Dataset_File(filename=filename, dataset=dataset)
+        datafile = Dataset_File(filename=filename, directory=subdirectory, dataset=dataset)
         datafile.created_time = datetime.now()
         datafile.modification_time = datafile.created_time
 
@@ -297,6 +302,7 @@ class AtomPersister:
         else:
             verify_replica(replica.id)
             #make_local_copy(replica.id)
+
 
     def _get_experiment_details(self, entry, user):
         try:
