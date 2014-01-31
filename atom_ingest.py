@@ -19,7 +19,6 @@ import urllib2
 from datetime import datetime
 from pytz import reference
 import inspect
-import os
 
 # Ensure filters are loaded
 try:
