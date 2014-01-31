@@ -289,12 +289,14 @@ class AtomPersister:
 
 
     def make_local_copy(self, replica):
-        from tardis.tardis_portal.tasks import make_local_copy
+        from tardis.tardis_portal.tasks import verify_replica
+        #from tardis.tardis_portal.tasks import make_local_copy
         if self.async_copy:
-            make_local_copy.delay(replica.id)
+            verify_replica.delay(replica.id)
+            #make_local_copy.delay(replica.id)
         else:
-            make_local_copy(replica.id)
-
+            verify_replica(replica.id)
+            #make_local_copy(replica.id)
 
     def _get_experiment_details(self, entry, user):
         try:
