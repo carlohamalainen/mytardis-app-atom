@@ -219,7 +219,8 @@ class AtomPersister:
 
         for staff in us:
 
-            if staff.email:
+            # if staff.email:
+            if False: # FIXME turn this on later...
                 logger.info('email task dispatched to staff %s for user %s'
                             % (staff.username, user.username))
                 email_user_task.delay(subject, 'user_creation_for_staff',
