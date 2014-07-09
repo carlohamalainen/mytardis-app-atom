@@ -36,19 +36,19 @@ except Exception:
 import logging
 logger = logging.getLogger(__name__)
 
+
 class AtomImportSchemas:
 
     BASE_NAMESPACE = 'http://mytardis.org/schemas/atom-import'
 
-
     @classmethod
     def get_schemas(cls):
-        cls._load_fixture_if_necessary();
-        return cls._get_all_schemas();
+        cls._load_fixture_if_necessary()
+        return cls._get_all_schemas()
 
     @classmethod
     def get_schema(cls, schema_type=Schema.DATASET):
-        cls._load_fixture_if_necessary();
+        cls._load_fixture_if_necessary()
         return Schema.objects.get(namespace__startswith=cls.BASE_NAMESPACE,
                                   type=schema_type)
 
@@ -63,7 +63,6 @@ class AtomImportSchemas:
         return Schema.objects.filter(namespace__startswith=cls.BASE_NAMESPACE)
 
 
-
 class AtomPersister:
 
     PARAM_ENTRY_ID = 'EntryID'
@@ -72,8 +71,7 @@ class AtomPersister:
     PARAM_EXPERIMENT_TITLE = 'ExperimentTitle'
 
     def __init__(self, async_copy=True):
-        self.async_copy = async_copy;
-
+        self.async_copy = async_copy
 
     def is_new(self, feed, entry):
         '''
@@ -87,7 +85,6 @@ class AtomPersister:
         except Dataset.DoesNotExist:
             return True
 
-
     def is_updated(self, feed, entry):
         '''
         :param feed: Feed context for entry
@@ -97,29 +94,29 @@ class AtomPersister:
         try:
             dataset = self._get_dataset(feed, entry)
 
-            dataset_latest_modification_time = datetime.fromtimestamp(0)
+            dataset_last_modified = datetime.fromtimestamp(0)
             for df in Dataset_File.objects.filter(dataset_id=dataset.id):
                 if df.modification_time is None:
                     continue
-                if df.modification_time > dataset_latest_modification_time:
-                    dataset_latest_modification_time = df.modification_time
+                if df.modification_time > dataset_last_modified:
+                    dataset_last_modified = df.modification_time
 
-            return iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()) 
-
+            return iso8601.parse_date(entry.updated) > \
+                dataset_last_modified.replace(tzinfo=reference.LocalTimezone())
         except Dataset.DoesNotExist:
             return False
 
-
     def _get_dataset(self, feed, entry):
         try:
-            param_name = ParameterName.objects.get(name=self.PARAM_ENTRY_ID,
-                                                   schema=AtomImportSchemas.get_schema())
+            param_name = \
+                ParameterName.objects.get(name=self.PARAM_ENTRY_ID,
+                                          schema=AtomImportSchemas
+                                          .get_schema())
             parameter = DatasetParameter.objects.get(name=param_name,
                                                      string_value=entry.id)
         except DatasetParameter.DoesNotExist:
             raise Dataset.DoesNotExist
         return parameter.parameterset.dataset
-
 
     def _create_entry_parameter_set(self, dataset, entryId, updated):
         namespace = AtomImportSchemas.get_schema(Schema.DATASET).namespace
@@ -127,18 +124,16 @@ class AtomPersister:
         mgr.new_param(self.PARAM_ENTRY_ID, entryId)
         mgr.new_param(self.PARAM_UPDATED, iso8601.parse_date(updated))
 
-
     def _create_experiment_id_parameter_set(self, experiment, experimentId):
         namespace = AtomImportSchemas.get_schema(Schema.EXPERIMENT).namespace
         mgr = ParameterSetManager(parentObject=experiment, schema=namespace)
         mgr.new_param(self.PARAM_EXPERIMENT_ID, experimentId)
 
-
     def _get_user_from_entry(self, entry):
         try:
             if entry.author_detail.email is not None:
                 logger.info('User has an email address: %s'
-                             % entry.author_detail.email)
+                            % entry.author_detail.email)
                 return User.objects.get(email=entry.author_detail.email)
         except (User.DoesNotExist, AttributeError):
             pass
@@ -156,7 +151,8 @@ class AtomPersister:
 
     def _create_user_from_entry(self, username):
         user = self._default_create_user(username)
-        logger.info('tried to create user %s with result: %s' % (username, user))
+        logger.info('tried to create user %s with result: %s'
+                    % (username, user))
 
         if not user:
             logger.info('No default user found, creating localdb user')
@@ -173,7 +169,8 @@ class AtomPersister:
             self._email_staff(user)
         else:
             authmethod = ""
-            for authKey, authDisplayName, authBackend in settings.AUTH_PROVIDERS:
+            for authKey, authDisplayName, authBackend in \
+                    settings.AUTH_PROVIDERS:
                 if settings.STAGING_PROTOCOL == authKey:
                     authmethod = authDisplayName
 
@@ -187,8 +184,9 @@ class AtomPersister:
 
         if settings.IS_SECURE:
             protocol = "s"
-        
-        current_site_complete = "http%s://%s" % (protocol, Site.objects.get_current().domain)
+
+        current_site_complete = "http%s://%s" % \
+            (protocol, Site.objects.get_current().domain)
 
         context = Context({
             'username': user.username,
@@ -207,7 +205,8 @@ class AtomPersister:
         if settings.IS_SECURE:
             protocol = "s"
 
-        current_site_complete = "http%s://%s" % (protocol, Site.objects.get_current().domain)
+        current_site_complete = "http%s://%s" % \
+            (protocol, Site.objects.get_current().domain)
 
         context = Context({
             'username': user.username,
@@ -239,7 +238,10 @@ class AtomPersister:
         subdirectory = getattr(enclosure, 'subdirectory', '')
 
         # Could check hashes.
-        existing_data_files = Dataset_File.objects.filter(filename=filename,directory=subdirectory,dataset=dataset)
+        existing_data_files = \
+            Dataset_File.objects.filter(filename=filename,
+                                        directory=subdirectory,
+                                        dataset=dataset)
 
         # Set a modification_time if there isn't one there,
         # because if no data file within this data set has
@@ -253,7 +255,9 @@ class AtomPersister:
         if existing_data_files.count() > 0:
             return
 
-        datafile = Dataset_File(filename=filename, directory=subdirectory, dataset=dataset)
+        datafile = Dataset_File(filename=filename,
+                                directory=subdirectory,
+                                dataset=dataset)
         datafile.created_time = datetime.now()
         datafile.modification_time = datafile.created_time
 
@@ -289,14 +293,12 @@ class AtomPersister:
         replica.save()
         self.make_local_copy(replica)
 
-
     def make_local_copy(self, replica):
         from tardis.tardis_portal.tasks import verify_replica
         if self.async_copy:
             verify_replica.delay(replica.id, only_local=False, reverify=True)
         else:
             verify_replica(replica.id, only_local=False, reverify=True)
-
 
     def _get_experiment_details(self, entry, user):
         try:
@@ -309,7 +311,7 @@ class AtomPersister:
                     experimentId = tag.term
                 if tag.scheme.endswith(self.PARAM_EXPERIMENT_TITLE):
                     title = tag.term
-            if (experimentId != None and title != None):
+            if (experimentId is not None and title is not None):
                 return (experimentId, title, Experiment.PUBLIC_ACCESS_NONE)
         except AttributeError:
             pass
@@ -317,14 +319,13 @@ class AtomPersister:
                 "Uncategorized Data",
                 Experiment.PUBLIC_ACCESS_NONE)
 
-
     def _get_experiment(self, entry, user):
         experimentId, title, public_access = \
             self._get_experiment_details(entry, user)
         try:
             try:
                 param_name = ParameterName.objects.\
-                    get(name=self.PARAM_EXPERIMENT_ID, \
+                    get(name=self.PARAM_EXPERIMENT_ID,
                         schema=AtomImportSchemas.get_schema(Schema.EXPERIMENT))
                 parameter = ExperimentParameter.objects.\
                     get(name=param_name, string_value=experimentId)
@@ -339,21 +340,22 @@ class AtomPersister:
 
             if user.first_name or user.last_name:
 
-                author_experiment = Author_Experiment(experiment=experiment,
-                                                      author='%s %s' % (user.first_name or '',
-                                                                        user.last_name or ''),
-                                                      order=0)
+                author_experiment = \
+                    Author_Experiment(experiment=experiment,
+                                      author='%s %s' % (user.first_name or '',
+                                                        user.last_name or ''),
+                                      order=0)
                 author_experiment.save()
 
             self._create_experiment_id_parameter_set(experiment, experimentId)
             acl = ObjectACL(content_object=experiment,
-                    pluginId=django_user,
-                    entityId=user.id,
-                    canRead=True,
-                    canWrite=True,
-                    canDelete=True,
-                    isOwner=True,
-                    aclOwnershipType=ObjectACL.OWNER_OWNED)
+                            pluginId=django_user,
+                            entityId=user.id,
+                            canRead=True,
+                            canWrite=True,
+                            canDelete=True,
+                            isOwner=True,
+                            aclOwnershipType=ObjectACL.OWNER_OWNED)
             acl.save()
             return experiment
 
@@ -370,14 +372,16 @@ class AtomPersister:
             try:
                 dataset = self._get_dataset(feed, entry)
 
-                dataset_latest_modification_time=datetime.fromtimestamp(0)
+                dataset_last_modified = datetime.fromtimestamp(0)
                 for df in Dataset_File.objects.filter(dataset_id=dataset.id):
                     if df.modification_time is None:
                         continue
-                    if df.modification_time > dataset_latest_modification_time:
-                        dataset_latest_modification_time = df.modification_time
+                    if df.modification_time > dataset_last_modified:
+                        dataset_last_modified = df.modification_time
 
-                if iso8601.parse_date(entry.updated) > dataset_latest_modification_time.replace(tzinfo=reference.LocalTimezone()):
+                if iso8601.parse_date(entry.updated) > \
+                    dataset_last_modified.replace(
+                        tzinfo=reference.LocalTimezone()):
                     # Add datafiles
                     for enclosure in getattr(entry, 'enclosures', []):
                         self.process_enclosure(dataset, enclosure)
@@ -402,14 +406,11 @@ class AtomPersister:
         return dataset
 
 
-
 class AtomWalker:
 
-
-    def __init__(self, root_doc, persister = AtomPersister()):
+    def __init__(self, root_doc, persister=AtomPersister()):
         self.root_doc = root_doc
         self.persister = persister
-
 
     @staticmethod
     def _get_next_href(doc):
@@ -422,11 +423,9 @@ class AtomWalker:
             # May not have any links to filter
             return None
 
-
     def ingest(self):
         for feed, entry in self.get_entries():
             self.persister.process(feed, entry)
-
 
     def get_entries(self):
         '''
@@ -435,17 +434,19 @@ class AtomWalker:
         doc = self.fetch_feed(self.root_doc)
         entries = []
         while True:
-            if doc == None:
+            if doc is None:
                 break
-            new_entries = filter(lambda entry: self.persister.is_new(doc.feed, entry) or self.persister.is_updated(doc.feed, entry), doc.entries)
+            new_entries = filter(lambda entry:
+                                 self.persister.is_new(doc.feed, entry) or
+                                 self.persister.is_updated(doc.feed, entry),
+                                 doc.entries)
             entries.extend(map(lambda entry: (doc.feed, entry), new_entries))
             next_href = self._get_next_href(doc)
             # Stop if the filter found an existing entry or no next
-            if len(new_entries) != len(doc.entries) or next_href == None:
+            if len(new_entries) != len(doc.entries) or next_href is None:
                 break
             doc = self.fetch_feed(next_href)
         return reversed(entries)
-
 
     def fetch_feed(self, url):
         logger.debug('Fetching feed: %s' % url)
@@ -457,13 +458,15 @@ class AtomWalker:
             # This is a modified version of feedparser, which uses requests:
             # https://github.com/CVL-dev/feedparser
             found_feed_credentials = False
-            for (settings_url, username, password) in settings.REMOTE_SERVER_CREDENTIALS:
+            for (settings_url, username, password) in \
+                    settings.REMOTE_SERVER_CREDENTIALS:
                 if url.startswith(settings_url.strip("/")):
-                    doc = feedparser.parse(url, username=username, password=password)
+                    doc = feedparser.parse(url, username=username,
+                                           password=password)
                     found_feed_credentials = True
-            if found_feed_credentials==False:
-                logger.error('Failed to find credentials for feed %s in settings.py' % url)
+            if found_feed_credentials is False:
+                logger.error('Failed to find credentials for feed %s' +
+                             ' in settings.py' % url)
         if doc is not None and doc.bozo:
             raise doc.bozo_exception
         return doc
-
