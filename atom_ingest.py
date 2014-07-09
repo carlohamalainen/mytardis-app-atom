@@ -239,8 +239,6 @@ class AtomPersister:
         subdirectory = getattr(enclosure, 'subdirectory', '')
 
         # Could check hashes.
-
-        #existing_data_files = Dataset_File.objects.filter(filename=filename, dataset=dataset)
         existing_data_files = Dataset_File.objects.filter(filename=filename,directory=subdirectory,dataset=dataset)
 
         # Set a modification_time if there isn't one there,
@@ -294,13 +292,10 @@ class AtomPersister:
 
     def make_local_copy(self, replica):
         from tardis.tardis_portal.tasks import verify_replica
-        #from tardis.tardis_portal.tasks import make_local_copy
         if self.async_copy:
-            verify_replica.delay(replica.id)
-            #make_local_copy.delay(replica.id)
+            verify_replica.delay(replica.id, only_local=False, reverify=True)
         else:
-            verify_replica(replica.id)
-            #make_local_copy(replica.id)
+            verify_replica(replica.id, only_local=False, reverify=True)
 
 
     def _get_experiment_details(self, entry, user):
